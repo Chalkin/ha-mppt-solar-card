@@ -1,0 +1,11 @@
+{
+  "common": {
+    "version": "Versjon",
+    "invalid_configuration": "Ikke gyldig konfiguration",
+    "show_warning": "Vis advarsel"
+  },
+  "chart": {
+    "title": "Effekt i dag",
+    "empty": "Ingen data ennå"
+  }
+}

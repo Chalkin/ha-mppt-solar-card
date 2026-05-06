@@ -1,0 +1,769 @@
+import { LitElement, html, svg, SVGTemplateResult, TemplateResult, css, PropertyValues, CSSResultGroup } from 'lit';
+import { customElement, property, state } from 'lit/decorators.js';
+import { HomeAssistant, LovelaceCardEditor } from 'custom-card-helpers';
+
+interface HistoryPoint {
+  t: number;
+  v: number;
+}
+
+// TODO: Replace this import with your own config type once you've defined your fields in types.ts.
+import type { MpptSolarCardConfig } from './types';
+
+import { CARD_VERSION } from './const';
+import { localize } from './localize/localize';
+
+// Styled console banner so your card is easy to spot in the browser console.
+// Stays visible in production — useful for version-mismatch debugging in HA.
+console.info(
+  `%c  MPPT-SOLAR-CARD \n%c  ${localize('common.version')} ${CARD_VERSION}    `,
+  'color: orange; font-weight: bold; background: black',
+  'color: white; font-weight: bold; background: dimgray',
+);
+
+// Registering with window.customCards makes your card appear in the Lovelace
+// "Add Card" UI picker with a name and description. This array is shared by all
+// custom cards on the page, so we guard with `|| []` before pushing.
+interface WindowWithCustomCards extends Window {
+  customCards: Array<{ type: string; name: string; description: string }>;
+}
+
+(window as unknown as WindowWithCustomCards).customCards =
+  (window as unknown as WindowWithCustomCards).customCards || [];
+(window as unknown as WindowWithCustomCards).customCards.push({
+  // TODO: Change 'mppt-solar-card' to match your @customElement decorator name.
+  type: 'mppt-solar-card',
+  // TODO: Give your card a user-facing name and description.
+  name: 'MPPT Solar Card',
+  description: 'A template custom card for you to create something awesome',
+});
+
+// TODO: Rename 'mppt-solar-card' to your card's unique tag name.
+// Convention: all lowercase, hyphen-separated, and prefixed to avoid clashes
+// e.g. 'my-weather-card'. Must match the `type:` in your YAML config and the
+// window.customCards entry above.
+@customElement('mppt-solar-card')
+export class MpptSolarCard extends LitElement {
+  // getConfigElement is called by HA when the user opens the visual editor.
+  // The dynamic import keeps the editor code out of the main bundle — it is only
+  // loaded when actually needed, improving initial load time.
+  // TODO: If you rename your editor element in editor.ts, update the tag name below.
+  public static async getConfigElement(): Promise<LovelaceCardEditor> {
+    try {
+      await import('./editor');
+      const element = document.createElement('mppt-solar-card-editor');
+      return element;
+    } catch (error) {
+      console.error('Failed to load editor:', error);
+      throw error;
+    }
+  }
+
+  // getStubConfig returns a minimal valid config used when the user adds your
+  // card from the picker without going through the editor first.
+  // TODO: Add your required fields here so the card doesn't throw on first render.
+  // Example: return { entity: 'light.living_room' };
+  public static getStubConfig(): Record<string, unknown> {
+    return {
+      name: 'Solar',
+      entity_power: '',
+      entity_peak_power_today: '',
+      entity_voltage: '',
+      entity_current: '',
+      entity_energy_today: '',
+      entity_energy_yesterday: '',
+      show_chart: true,
+      chart_hours: 24,
+      chart_height: 64,
+    };
+  }
+
+  // `hass` is set by HA on every state change anywhere in the system.
+  // `attribute: false` means it is set as a JS property, not an HTML attribute
+  // (the object is too large to serialize as an attribute).
+  // Lit will schedule a re-render whenever this property reference changes.
+  @property({ attribute: false }) public hass!: HomeAssistant;
+
+  // `config` is private internal state set via setConfig().
+  // Using @state (instead of @property) means it won't be exposed as a public
+  // property but will still trigger re-renders when it changes.
+  @state() private config!: MpptSolarCardConfig;
+
+  // Power history time series for the sparkline (unix seconds + watts).
+  @state() private _history: HistoryPoint[] = [];
+
+  // Index of the currently hovered sample, or null when not hovering.
+  @state() private _hoverIdx: number | null = null;
+
+  // Guards against concurrent/repeated history fetches.
+  private _historyLoading = false;
+
+  // setConfig is called by HA whenever the YAML config changes (including from
+  // the visual editor). It runs before the element is connected to the DOM, so
+  // you can't access `this.hass` here — it may not be set yet.
+  //
+  // Good practices:
+  //   • Throw an Error for truly invalid configs (HA will surface it as an error card).
+  //   • Spread defaults first, then the user config on top — this lets users omit
+  //     optional fields without your render() code needing null-checks everywhere.
+  //   • Never call async operations here; use connectedCallback or firstUpdated instead.
+  //
+  // https://lit.dev/docs/components/properties/#accessors-custom
+  public setConfig(config: MpptSolarCardConfig): void {
+    if (!config) {
+      throw new Error(localize('common.invalid_configuration'));
+    }
+    this.config = {
+      name: 'MPPT Solar',
+      ...config,
+    };
+  }
+
+  protected shouldUpdate(changedProps: PropertyValues): boolean {
+    if (!this.config) return false;
+    if (changedProps.has('config')) return true;
+    if (changedProps.has('_history') || changedProps.has('_hoverIdx')) return true;
+    if (!changedProps.has('hass')) return false;
+    const oldHass = changedProps.get('hass') as HomeAssistant | undefined;
+    if (!oldHass) return true;
+    const ids = [
+      this.config.entity_power,
+      this.config.entity_peak_power_today,
+      this.config.entity_voltage,
+      this.config.entity_current,
+      this.config.entity_energy_today,
+      this.config.entity_energy_yesterday,
+    ].filter(Boolean) as string[];
+    return ids.some((id) => oldHass.states[id] !== this.hass.states[id]);
+  }
+
+  protected updated(changedProps: PropertyValues): void {
+    if (!this.hass || !this.config) return;
+
+    const oldConfig = changedProps.get('config') as MpptSolarCardConfig | undefined;
+    const configChanged =
+      changedProps.has('config') &&
+      (!oldConfig ||
+        oldConfig.entity_power !== this.config.entity_power ||
+        (oldConfig.chart_hours ?? 24) !== (this.config.chart_hours ?? 24) ||
+        (oldConfig.show_chart !== false) !== (this.config.show_chart !== false));
+
+    const oldHass = changedProps.get('hass') as HomeAssistant | undefined;
+    const firstHass = changedProps.has('hass') && !oldHass;
+
+    if ((configChanged || firstHass) && this.config.show_chart !== false) {
+      this._fetchHistory();
+    }
+
+    if (changedProps.has('hass') && oldHass && this.config.entity_power) {
+      const id = this.config.entity_power;
+      const newSt = this.hass.states[id];
+      const oldSt = oldHass.states[id];
+      if (newSt && newSt !== oldSt) {
+        const v = parseFloat(newSt.state);
+        const t = new Date(newSt.last_updated).getTime() / 1000;
+        if (!isNaN(v) && isFinite(t)) {
+          const last = this._history[this._history.length - 1];
+          if (!last || last.t < t) {
+            this._history = [...this._history, { t, v }];
+          }
+        }
+      }
+    }
+  }
+
+  private async _fetchHistory(): Promise<void> {
+    if (this._historyLoading) return;
+    if (!this.hass || !this.config.entity_power) {
+      this._history = [];
+      return;
+    }
+    this._historyLoading = true;
+    const entityId = this.config.entity_power;
+    const hours = Math.max(1, this.config.chart_hours ?? 24);
+    const end = new Date();
+    const start = new Date(end.getTime() - hours * 3600 * 1000);
+    try {
+      const result = await this.hass.callWS<Record<string, Array<{ s: string; lu: number }>>>({
+        type: 'history/history_during_period',
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        entity_ids: [entityId],
+        minimal_response: true,
+        no_attributes: true,
+        significant_changes_only: false,
+      });
+      const series = result?.[entityId] ?? [];
+      this._history = series.map((s) => ({ t: s.lu, v: parseFloat(s.s) })).filter((p) => isFinite(p.t) && !isNaN(p.v));
+    } catch (err) {
+      console.warn('mppt-solar-card: history fetch failed', err);
+      this._history = [];
+    } finally {
+      this._historyLoading = false;
+    }
+  }
+
+  protected render(): TemplateResult | void {
+    if (!this.hass) {
+      return this._renderSkeleton();
+    }
+
+    return html`
+      <ha-card tabindex="0">
+        <div class="solar-card">
+          ${this._renderHeader()} ${this._renderHero()} ${this._renderChart()}
+          <div class="divider"></div>
+          ${this._renderStats()}
+          <div class="divider"></div>
+          ${this._renderEnergy()}
+        </div>
+      </ha-card>
+    `;
+  }
+
+  /** Read state value from an entity, returns '—' when unavailable. */
+  private _val(entityId?: string): string {
+    if (!entityId || !this.hass) return '—';
+    const s = this.hass.states[entityId];
+    if (!s || s.state === 'unavailable' || s.state === 'unknown') return '—';
+    return s.state;
+  }
+
+  /** Format a numeric state to a fixed number of decimal places. */
+  private _fmt(entityId?: string, decimals = 0): string {
+    const raw = this._val(entityId);
+    if (raw === '—') return raw;
+    const n = parseFloat(raw);
+    return isNaN(n) ? raw : n.toFixed(decimals);
+  }
+
+  private _renderHeader(): TemplateResult {
+    const name = this.config.name ?? 'MPPT Solar';
+    return html`
+      <div class="header">
+        <div class="header-left">
+          <span class="header-dot"></span>
+          <span class="header-title">${name}</span>
+        </div>
+        <ha-icon class="header-icon" icon="mdi:weather-sunny"></ha-icon>
+      </div>
+    `;
+  }
+
+  private _renderHero(): TemplateResult {
+    const power = this._fmt(this.config.entity_power, 0);
+    const peak = this._fmt(this.config.entity_peak_power_today, 0);
+    return html`
+      <div class="hero">
+        <div class="hero-power">
+          <span class="hero-value">${power}</span>
+          <span class="hero-unit">W</span>
+        </div>
+        <div class="hero-peak">peak ${peak} W today</div>
+      </div>
+    `;
+  }
+
+  /**
+   * Bucket-average `data` into at most `maxPts` evenly-spaced samples.
+   * This reduces noise without losing the overall shape of the curve.
+   */
+  private _downsample(data: HistoryPoint[], maxPts = 150): HistoryPoint[] {
+    if (data.length <= maxPts) return data;
+    const tMin = data[0].t;
+    const tMax = data[data.length - 1].t;
+    const bucketWidth = (tMax - tMin) / maxPts;
+    const buckets: number[][] = Array.from({ length: maxPts }, () => []);
+    for (const p of data) {
+      const idx = Math.min(Math.floor((p.t - tMin) / bucketWidth), maxPts - 1);
+      buckets[idx].push(p.v);
+    }
+    const result: HistoryPoint[] = [];
+    for (let i = 0; i < maxPts; i++) {
+      if (buckets[i].length === 0) continue;
+      const avg = buckets[i].reduce((a, b) => a + b, 0) / buckets[i].length;
+      result.push({ t: tMin + (i + 0.5) * bucketWidth, v: avg });
+    }
+    return result;
+  }
+
+  // Downsampled data used by both _renderChart and _onChartMove.
+  // Not reactive — updated synchronously inside _renderChart.
+  private _chartData: HistoryPoint[] = [];
+
+  private _renderChart(): TemplateResult {
+    if (this.config.show_chart === false) return html``;
+
+    const height = Math.max(24, this.config.chart_height ?? 64);
+    const width = 300;
+
+    if (this._history.length < 2) {
+      this._chartData = [];
+      return html`<div class="chart chart--empty" style="height:${height}px">${localize('chart.empty')}</div>`;
+    }
+
+    // Downsample for smoothness; store for hover handler.
+    const data = this._downsample(this._history, 150);
+    this._chartData = data;
+
+    const NIGHT_THRESHOLD = 1; // watts — below this is treated as no-sun
+    const tMin = data[0].t;
+    const tMax = data[data.length - 1].t;
+    const tRange = Math.max(tMax - tMin, 1);
+    const vMax = Math.max(...data.map((d) => d.v), 1);
+    const padY = 2;
+
+    const toPoint = (d: HistoryPoint): { x: number; y: number } => ({
+      x: ((d.t - tMin) / tRange) * width,
+      y: height - padY - (d.v / vMax) * (height - padY * 2),
+    });
+
+    // Split into contiguous "active" (daytime) segments so the zero-power
+    // baseline during night is never drawn.
+    type Segment = { pts: { x: number; y: number }[]; startIdx: number };
+    const segments: Segment[] = [];
+    let segPts: { x: number; y: number }[] = [];
+    let segStart = -1;
+    for (let i = 0; i < data.length; i++) {
+      if (data[i].v > NIGHT_THRESHOLD) {
+        if (segStart === -1) segStart = i;
+        segPts.push(toPoint(data[i]));
+      } else {
+        if (segPts.length >= 2) segments.push({ pts: segPts, startIdx: segStart });
+        segPts = [];
+        segStart = -1;
+      }
+    }
+    if (segPts.length >= 2) segments.push({ pts: segPts, startIdx: segStart });
+
+    const hoverIdx = this._hoverIdx;
+    const hoverData = hoverIdx != null ? data[hoverIdx] : null;
+    const hoverIsNight = hoverData != null && hoverData.v <= NIGHT_THRESHOLD;
+    const hoverPt = hoverData && !hoverIsNight ? toPoint(hoverData) : null;
+
+    const unit = this._unit(this.config.entity_power) || 'W';
+
+    return html`
+      <div
+        class="chart"
+        style="height:${height}px"
+        @pointermove=${this._onChartMove}
+        @pointerleave=${this._onChartLeave}
+        role="img"
+        aria-label=${localize('chart.title')}
+      >
+        <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" class="chart-svg">
+          ${segments.map(({ pts }) => {
+            const linePath = this._smoothPath(pts);
+            const first = pts[0];
+            const last = pts[pts.length - 1];
+            const areaPath = `${linePath} L ${last.x.toFixed(2)},${height} L ${first.x.toFixed(2)},${height} Z`;
+            return svg`
+              <path class="chart-area" d=${areaPath}></path>
+              <path class="chart-line" d=${linePath}></path>
+            `;
+          })}
+          ${hoverPt ? this._renderCursor(hoverPt, height) : ''}
+        </svg>
+        ${hoverData && hoverPt
+          ? html`<div class="chart-tooltip" style="left:${(hoverPt.x / width) * 100}%">
+              <div class="chart-tooltip-value">${Math.round(hoverData.v)} ${unit}</div>
+              <div class="chart-tooltip-time">${this._fmtTime(hoverData.t)}</div>
+            </div>`
+          : ''}
+      </div>
+    `;
+  }
+
+  private _renderCursor(pt: { x: number; y: number }, height: number): SVGTemplateResult {
+    return svg`
+      <line class="chart-cursor" x1=${pt.x} x2=${pt.x} y1="0" y2=${height}></line>
+      <circle class="chart-dot" cx=${pt.x} cy=${pt.y} r="3.5"></circle>
+    `;
+  }
+
+  /** Catmull-Rom → cubic Bézier smoothing for a tidy filled curve. */
+  private _smoothPath(pts: { x: number; y: number }[]): string {
+    if (pts.length === 0) return '';
+    if (pts.length === 1) return `M ${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)}`;
+    let d = `M ${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1] || pts[i];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[i + 2] || p2;
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      d += ` C ${cp1x.toFixed(2)},${cp1y.toFixed(2)} ${cp2x.toFixed(2)},${cp2y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)}`;
+    }
+    return d;
+  }
+
+  private _onChartMove = (ev: PointerEvent): void => {
+    const target = ev.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const data = this._chartData;
+    if (rect.width <= 0 || !data.length) return;
+    const fx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+    const tTarget = data[0].t + fx * (data[data.length - 1].t - data[0].t);
+    let lo = 0;
+    let hi = data.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (data[mid].t < tTarget) lo = mid + 1;
+      else hi = mid;
+    }
+    let nearest = lo;
+    if (lo > 0 && Math.abs(data[lo - 1].t - tTarget) < Math.abs(data[lo].t - tTarget)) {
+      nearest = lo - 1;
+    }
+    if (this._hoverIdx !== nearest) this._hoverIdx = nearest;
+  };
+
+  private _onChartLeave = (): void => {
+    if (this._hoverIdx !== null) this._hoverIdx = null;
+  };
+
+  private _unit(entityId?: string): string | undefined {
+    if (!entityId || !this.hass) return undefined;
+    const s = this.hass.states[entityId];
+    return s?.attributes?.unit_of_measurement as string | undefined;
+  }
+
+  private _fmtTime(t: number): string {
+    const d = new Date(t * 1000);
+    const lang = this.hass?.locale?.language;
+    try {
+      return d.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    }
+  }
+
+  private _renderStats(): TemplateResult {
+    const voltage = this._fmt(this.config.entity_voltage, 1);
+    const current = this._fmt(this.config.entity_current, 1);
+    return html`
+      <div class="stats-grid">
+        <div class="stat-cell">
+          <div class="stat-label">Voltage</div>
+          <div class="stat-value">${voltage} <span class="stat-unit">V</span></div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-label">Current</div>
+          <div class="stat-value">${current} <span class="stat-unit">A</span></div>
+        </div>
+      </div>
+    `;
+  }
+
+  private _renderEnergy(): TemplateResult {
+    const today = this._fmt(this.config.entity_energy_today, 2);
+    const yesterday = this._fmt(this.config.entity_energy_yesterday, 2);
+    return html`
+      <div class="energy-grid">
+        <div class="energy-row">
+          <span class="energy-label">Today</span>
+          <span class="energy-value accent">${today} kWh</span>
+        </div>
+        <div class="energy-row">
+          <span class="energy-label secondary">Yesterday</span>
+          <span class="energy-value secondary">${yesterday} kWh</span>
+        </div>
+      </div>
+    `;
+  }
+
+  private _renderSkeleton(): TemplateResult {
+    return html`
+      <ha-card>
+        <div class="solar-card skeleton-content">
+          <div class="skeleton skeleton-header"></div>
+          <div class="skeleton skeleton-hero"></div>
+          <div class="skeleton skeleton-sub"></div>
+          <div class="skeleton skeleton-chart"></div>
+          <div class="divider"></div>
+          <div class="skeleton skeleton-stats"></div>
+          <div class="divider"></div>
+          <div class="skeleton skeleton-energy"></div>
+        </div>
+      </ha-card>
+    `;
+  }
+
+  private _showWarning(warning: string): TemplateResult {
+    return html` <hui-warning>${warning}</hui-warning> `;
+  }
+
+  private _showError(error: string): TemplateResult {
+    const errorCard = document.createElement('hui-error-card');
+    errorCard.setConfig({ type: 'error', error, origConfig: this.config });
+    return html` ${errorCard} `;
+  }
+
+  static get styles(): CSSResultGroup {
+    return css`
+      /* ── Host / accent token ───────────────────────────── */
+      :host {
+        --solar-accent: #f0b429;
+        --solar-accent-dim: rgba(240, 180, 41, 0.15);
+      }
+
+      /* ── Card wrapper ──────────────────────────────────── */
+      .solar-card {
+        padding: 16px 20px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+      }
+
+      /* ── Header ────────────────────────────────────────── */
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+      .header-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .header-dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--solar-accent);
+        flex-shrink: 0;
+      }
+      .header-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+        letter-spacing: 0.01em;
+      }
+      .header-icon {
+        --mdc-icon-size: 22px;
+        color: var(--solar-accent);
+        opacity: 0.85;
+      }
+
+      /* ── Hero power block ──────────────────────────────── */
+      .hero {
+        margin-bottom: 16px;
+      }
+      .hero-power {
+        display: flex;
+        align-items: baseline;
+        gap: 4px;
+        line-height: 1;
+      }
+      .hero-value {
+        font-size: 64px;
+        font-weight: 700;
+        color: var(--solar-accent);
+        letter-spacing: -2px;
+        line-height: 1;
+      }
+      .hero-unit {
+        font-size: 24px;
+        font-weight: 500;
+        color: var(--solar-accent);
+        margin-bottom: 4px;
+      }
+      .hero-peak {
+        margin-top: 6px;
+        font-size: 16px;
+        color: var(--secondary-text-color);
+        font-weight: 400;
+      }
+
+      /* ── Divider ───────────────────────────────────────── */
+      .divider {
+        height: 1px;
+        background: var(--divider-color);
+        margin: 14px 0;
+      }
+
+      /* ── Chart / sparkline ─────────────────────────────── */
+      .chart {
+        position: relative;
+        width: 100%;
+        margin-top: 4px;
+        touch-action: none;
+      }
+      .chart--empty {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        color: var(--secondary-text-color);
+      }
+      .chart-svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+      }
+      .chart-area {
+        fill: var(--solar-accent-dim);
+        stroke: none;
+      }
+      .chart-line {
+        fill: none;
+        stroke: var(--solar-accent);
+        stroke-width: 2;
+        stroke-linejoin: round;
+        stroke-linecap: round;
+        vector-effect: non-scaling-stroke;
+      }
+      .chart-cursor {
+        stroke: var(--secondary-text-color);
+        stroke-width: 1;
+        stroke-dasharray: 2 3;
+        opacity: 0.6;
+        vector-effect: non-scaling-stroke;
+      }
+      .chart-dot {
+        fill: var(--solar-accent);
+        stroke: var(--card-background-color, var(--ha-card-background, #1c1c1e));
+        stroke-width: 2;
+        vector-effect: non-scaling-stroke;
+      }
+      .chart-tooltip {
+        position: absolute;
+        top: 0;
+        transform: translate(-50%, -100%);
+        padding: 4px 8px;
+        background: var(--card-background-color, var(--ha-card-background, #1c1c1e));
+        border: 1px solid var(--divider-color);
+        border-radius: 6px;
+        font-size: 12px;
+        line-height: 1.2;
+        color: var(--primary-text-color);
+        pointer-events: none;
+        white-space: nowrap;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+      }
+      .chart-tooltip-value {
+        font-weight: 600;
+        color: var(--solar-accent);
+      }
+      .chart-tooltip-time {
+        color: var(--secondary-text-color);
+      }
+
+      /* ── Voltage / Current stats grid ──────────────────── */
+      .stats-grid {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+      }
+      .stat-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .stat-cell:last-child {
+        align-items: flex-end;
+        text-align: right;
+      }
+      .stat-label {
+        font-size: 16px;
+        color: var(--secondary-text-color);
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      .stat-value {
+        font-size: 22px;
+        font-weight: 500;
+        color: var(--primary-text-color);
+        letter-spacing: -0.5px;
+        line-height: 1.2;
+      }
+      .stat-unit {
+        font-size: 13px;
+        font-weight: 400;
+        color: var(--secondary-text-color);
+      }
+
+      /* ── Energy rows ───────────────────────────────────── */
+      .energy-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .energy-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+      }
+      .energy-label {
+        font-size: 16px;
+        color: var(--primary-text-color);
+        font-weight: 600;
+      }
+      .energy-label.secondary {
+        color: var(--secondary-text-color);
+      }
+      .energy-value {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--primary-text-color);
+      }
+      .energy-value.accent {
+        color: var(--solar-accent);
+      }
+      .energy-value.secondary {
+        color: var(--secondary-text-color);
+        font-weight: 400;
+      }
+
+      /* ── Skeleton / loading UI ───────────────────────── */
+      @keyframes skeleton-pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.4;
+        }
+      }
+      .skeleton {
+        border-radius: 6px;
+        background: var(--divider-color);
+        animation: skeleton-pulse 1.4s ease-in-out infinite;
+      }
+      .skeleton-content {
+        pointer-events: none;
+        gap: 12px;
+      }
+      .skeleton-header {
+        height: 20px;
+        width: 55%;
+      }
+      .skeleton-hero {
+        height: 64px;
+        width: 45%;
+        margin-top: 4px;
+      }
+      .skeleton-sub {
+        height: 14px;
+        width: 38%;
+      }
+      .skeleton-chart {
+        height: 64px;
+        margin-top: 4px;
+      }
+      .skeleton-stats {
+        height: 48px;
+      }
+      .skeleton-energy {
+        height: 44px;
+      }
+    `;
+  }
+}
