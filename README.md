@@ -71,6 +71,7 @@ entity_voltage: sensor.solar_voltage
 entity_current: sensor.solar_current
 entity_energy_today: sensor.solar_energy_today
 entity_energy_yesterday: sensor.solar_energy_yesterday
+chart_mode: auto
 ```
 
 ---
@@ -96,6 +97,34 @@ Each field accepts a Home Assistant entity ID string. All bindings are optional.
 | `entity_current`          | string | Stats row           | A    | Charge current (shown to 1 decimal)            |
 | `entity_energy_today`     | string | Energy row (accent) | kWh  | Energy harvested today (shown to 2 decimals)   |
 | `entity_energy_yesterday` | string | Energy row          | kWh  | Energy harvested yesterday (shown to 2 decimals) |
+
+### Chart options
+
+| Name           | Type   | Required     | Description                                              | Default  |
+| -------------- | ------ | ------------ | -------------------------------------------------------- | -------- |
+| `show_chart`   | bool   | **Optional** | Show or hide the power history sparkline                 | `true`   |
+| `chart_height` | number | **Optional** | Height of the chart area in pixels                       | `64`     |
+| `chart_mode`   | string | **Optional** | Chart time-window mode. `auto` or `rolling` (see below)  | `auto`   |
+| `chart_hours`  | number | **Optional** | Window size in hours. Only used when `chart_mode: rolling` | `24`   |
+
+#### `chart_mode: auto` (default — Auto-daylight)
+
+The chart fetches data from midnight yesterday through the current moment and overlays yesterday's curve in gray behind today's curve in amber. The X axis is automatically cropped to the **active solar window** — the time between the first and last moment either day had measurable output (> 1 W). This ensures the full card width is used for the hours that actually matter, with night-time gaps excluded.
+
+- **At sunrise:** today's curve begins growing from the left edge; yesterday's full curve is already visible behind it for comparison.
+- **During the day:** both curves fill the card width; yesterday's peak and ramp-up pattern are immediately comparable to today's progress.
+- **After sunset:** the axis is cropped to the production window of whichever day ended later.
+- **Around midnight (no production yet today):** yesterday's full curve is shown alone so the chart is never blank.
+
+#### `chart_mode: rolling`
+
+Shows a fixed rolling window ending at the current moment (length set by `chart_hours`, default 24 h). The previous equivalent window (24–48 h ago) is overlaid in gray for comparison. Use this mode if you prefer a consistent, time-locked view rather than a daylight-cropped one.
+
+```yaml
+# Rolling 12-hour window example
+chart_mode: rolling
+chart_hours: 12
+```
 
 ---
 

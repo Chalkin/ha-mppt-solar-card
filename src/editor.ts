@@ -214,12 +214,32 @@ export class MpptSolarCardEditor extends LitElement implements LovelaceCardEdito
           </ha-formfield>
           <ha-selector
             .hass=${this.hass}
-            .selector=${{ number: { min: 1, max: 48, step: 1, mode: 'slider' } }}
-            .value=${this._config.chart_hours ?? 24}
-            label="Chart Hours"
-            .configValue=${'chart_hours'}
+            .selector=${{
+              select: {
+                options: [
+                  { value: 'auto', label: 'Auto-daylight — crop to active solar hours' },
+                  { value: 'rolling', label: 'Rolling window — fixed last N hours' },
+                ],
+                mode: 'list',
+              },
+            }}
+            .value=${this._config.chart_mode || 'auto'}
+            label="Chart Mode"
+            .configValue=${'chart_mode'}
             @value-changed=${this._selectorChanged}
           ></ha-selector>
+          ${(this._config.chart_mode ?? 'auto') === 'rolling'
+            ? html`
+                <ha-selector
+                  .hass=${this.hass}
+                  .selector=${{ number: { min: 1, max: 48, step: 1, mode: 'slider' } }}
+                  .value=${this._config.chart_hours ?? 24}
+                  label="Chart Hours"
+                  .configValue=${'chart_hours'}
+                  @value-changed=${this._selectorChanged}
+                ></ha-selector>
+              `
+            : ''}
           <ha-selector
             .hass=${this.hass}
             .selector=${{ number: { min: 32, max: 200, step: 4, mode: 'slider' } }}

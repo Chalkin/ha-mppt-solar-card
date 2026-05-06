@@ -73,6 +73,7 @@ export class MpptSolarCard extends LitElement {
       entity_energy_today: '',
       entity_energy_yesterday: '',
       show_chart: true,
+      chart_mode: 'auto',
       chart_hours: 24,
       chart_height: 64,
     };
@@ -92,8 +93,13 @@ export class MpptSolarCard extends LitElement {
   // Power history time series for the sparkline (unix seconds + watts).
   @state() private _history: HistoryPoint[] = [];
 
-  // Index of the currently hovered sample, or null when not hovering.
-  @state() private _hoverIdx: number | null = null;
+  // Power history for the previous period (24–48 h ago), used for the overlay line.
+  @state() private _historyPrev: HistoryPoint[] = [];
+
+  // Unix-second timestamp of the hovered position, or null when not hovering.
+  // Using a timestamp (rather than a series index) lets the hover work even
+  // when today's series is empty and only the previous-day curve is visible.
+  @state() private _hoverT: number | null = null;
 
   // Guards against concurrent/repeated history fetches.
   private _historyLoading = false;
@@ -122,7 +128,7 @@ export class MpptSolarCard extends LitElement {
   protected shouldUpdate(changedProps: PropertyValues): boolean {
     if (!this.config) return false;
     if (changedProps.has('config')) return true;
-    if (changedProps.has('_history') || changedProps.has('_hoverIdx')) return true;
+    if (changedProps.has('_history') || changedProps.has('_historyPrev') || changedProps.has('_hoverT')) return true;
     if (!changedProps.has('hass')) return false;
     const oldHass = changedProps.get('hass') as HomeAssistant | undefined;
     if (!oldHass) return true;
@@ -146,6 +152,7 @@ export class MpptSolarCard extends LitElement {
       (!oldConfig ||
         oldConfig.entity_power !== this.config.entity_power ||
         (oldConfig.chart_hours ?? 24) !== (this.config.chart_hours ?? 24) ||
+        (oldConfig.chart_mode ?? 'auto') !== (this.config.chart_mode ?? 'auto') ||
         (oldConfig.show_chart !== false) !== (this.config.show_chart !== false));
 
     const oldHass = changedProps.get('hass') as HomeAssistant | undefined;
@@ -176,15 +183,69 @@ export class MpptSolarCard extends LitElement {
     if (this._historyLoading) return;
     if (!this.hass || !this.config.entity_power) {
       this._history = [];
+      this._historyPrev = [];
       return;
     }
     this._historyLoading = true;
     const entityId = this.config.entity_power;
+    const mode = this.config.chart_mode ?? 'auto';
+    try {
+      if (mode === 'auto') {
+        await this._fetchHistoryAuto(entityId);
+      } else {
+        await this._fetchHistoryRolling(entityId);
+      }
+    } catch (err) {
+      console.warn('mppt-solar-card: history fetch failed', err);
+      this._history = [];
+      this._historyPrev = [];
+    } finally {
+      this._historyLoading = false;
+    }
+  }
+
+  /** Auto-daylight: fetch yesterday-midnight → now, split by calendar day. */
+  private async _fetchHistoryAuto(entityId: string): Promise<void> {
+    const now = new Date();
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfYesterday = new Date(startOfToday.getTime() - 24 * 3600 * 1000);
+    const result = await this.hass.callWS<Record<string, Array<{ s: string; lu: number }>>>({
+      type: 'history/history_during_period',
+      start_time: startOfYesterday.toISOString(),
+      end_time: now.toISOString(),
+      entity_ids: [entityId],
+      minimal_response: true,
+      no_attributes: true,
+      significant_changes_only: false,
+    });
+    const series = result?.[entityId] ?? [];
+    const startOfTodaySec = startOfToday.getTime() / 1000;
+    const today: HistoryPoint[] = [];
+    const prev: HistoryPoint[] = [];
+    for (const s of series) {
+      const v = parseFloat(s.s);
+      if (!isFinite(s.lu) || isNaN(v)) continue;
+      if (s.lu >= startOfTodaySec) {
+        today.push({ t: s.lu, v });
+      } else {
+        // Shift yesterday's points forward by 24 h so they overlay today on the X axis.
+        prev.push({ t: s.lu + 24 * 3600, v });
+      }
+    }
+    this._history = today;
+    this._historyPrev = prev;
+  }
+
+  /** Rolling window: fetch the last `chart_hours` hours plus the equivalent prior window. */
+  private async _fetchHistoryRolling(entityId: string): Promise<void> {
     const hours = Math.max(1, this.config.chart_hours ?? 24);
     const end = new Date();
     const start = new Date(end.getTime() - hours * 3600 * 1000);
-    try {
-      const result = await this.hass.callWS<Record<string, Array<{ s: string; lu: number }>>>({
+    const prevEnd = start;
+    const prevStart = new Date(prevEnd.getTime() - hours * 3600 * 1000);
+    const [result, resultPrev] = await Promise.all([
+      this.hass.callWS<Record<string, Array<{ s: string; lu: number }>>>({
         type: 'history/history_during_period',
         start_time: start.toISOString(),
         end_time: end.toISOString(),
@@ -192,15 +253,24 @@ export class MpptSolarCard extends LitElement {
         minimal_response: true,
         no_attributes: true,
         significant_changes_only: false,
-      });
-      const series = result?.[entityId] ?? [];
-      this._history = series.map((s) => ({ t: s.lu, v: parseFloat(s.s) })).filter((p) => isFinite(p.t) && !isNaN(p.v));
-    } catch (err) {
-      console.warn('mppt-solar-card: history fetch failed', err);
-      this._history = [];
-    } finally {
-      this._historyLoading = false;
-    }
+      }),
+      this.hass.callWS<Record<string, Array<{ s: string; lu: number }>>>({
+        type: 'history/history_during_period',
+        start_time: prevStart.toISOString(),
+        end_time: prevEnd.toISOString(),
+        entity_ids: [entityId],
+        minimal_response: true,
+        no_attributes: true,
+        significant_changes_only: false,
+      }),
+    ]);
+    const shiftSec = hours * 3600;
+    const series = result?.[entityId] ?? [];
+    this._history = series.map((s) => ({ t: s.lu, v: parseFloat(s.s) })).filter((p) => isFinite(p.t) && !isNaN(p.v));
+    const seriesPrev = resultPrev?.[entityId] ?? [];
+    this._historyPrev = seriesPrev
+      .map((s) => ({ t: s.lu + shiftSec, v: parseFloat(s.s) }))
+      .filter((p) => isFinite(p.t) && !isNaN(p.v));
   }
 
   protected render(): TemplateResult | void {
@@ -288,8 +358,10 @@ export class MpptSolarCard extends LitElement {
   }
 
   // Downsampled data used by both _renderChart and _onChartMove.
-  // Not reactive — updated synchronously inside _renderChart.
-  private _chartData: HistoryPoint[] = [];
+  // X-axis bounds (unix seconds) of the rendered chart. Used so the hover
+  // cursor maps correctly when the X axis is cropped (auto mode).
+  private _chartTMin = 0;
+  private _chartTMax = 0;
 
   private _renderChart(): TemplateResult {
     if (this.config.show_chart === false) return html``;
@@ -297,26 +369,70 @@ export class MpptSolarCard extends LitElement {
     const height = Math.max(24, this.config.chart_height ?? 64);
     const width = 300;
 
-    if (this._history.length < 2) {
-      this._chartData = [];
+    const hasToday = this._history.length >= 2;
+    const hasPrev = this._historyPrev.length >= 2;
+    if (!hasToday && !hasPrev) {
       return html`<div class="chart chart--empty" style="height:${height}px">${localize('chart.empty')}</div>`;
     }
 
-    // Downsample for smoothness; store for hover handler.
-    const data = this._downsample(this._history, 150);
-    this._chartData = data;
+    // Downsample for smoothness; store today's data for the hover handler.
+    const data = hasToday ? this._downsample(this._history, 150) : [];
+    const dataPrev = hasPrev ? this._downsample(this._historyPrev, 150) : [];
 
     const NIGHT_THRESHOLD = 1; // watts — below this is treated as no-sun
-    const tMin = data[0].t;
-    const tMax = data[data.length - 1].t;
+    const mode = this.config.chart_mode ?? 'auto';
+
+    // X-axis bounds.
+    //  • auto:    crop to the union of active (>NIGHT_THRESHOLD) points across
+    //             both series so the chart fills edge-to-edge without wasting
+    //             width on dark night hours.
+    //  • rolling: keep the full requested window (today's first → last sample).
+    let tMin: number;
+    let tMax: number;
+    if (mode === 'auto') {
+      const activeAll = [
+        ...data.filter((d) => d.v > NIGHT_THRESHOLD),
+        ...dataPrev.filter((d) => d.v > NIGHT_THRESHOLD),
+      ];
+      if (activeAll.length >= 2) {
+        tMin = Math.min(...activeAll.map((p) => p.t));
+        tMax = Math.max(...activeAll.map((p) => p.t));
+      } else {
+        const allPts = [...data, ...dataPrev];
+        tMin = Math.min(...allPts.map((p) => p.t));
+        tMax = Math.max(...allPts.map((p) => p.t));
+      }
+    } else {
+      tMin = hasToday ? data[0].t : dataPrev[0].t;
+      tMax = hasToday ? data[data.length - 1].t : dataPrev[dataPrev.length - 1].t;
+    }
     const tRange = Math.max(tMax - tMin, 1);
-    const vMax = Math.max(...data.map((d) => d.v), 1);
+    this._chartTMin = tMin;
+    this._chartTMax = tMax;
+
+    // Scale vMax across both series so the previous-day overlay shares the same Y axis.
+    const vMax = Math.max(...data.map((d) => d.v), ...dataPrev.map((d) => d.v), 1);
     const padY = 2;
 
     const toPoint = (d: HistoryPoint): { x: number; y: number } => ({
       x: ((d.t - tMin) / tRange) * width,
       y: height - padY - (d.v / vMax) * (height - padY * 2),
     });
+
+    const buildSegments = (pts_data: HistoryPoint[]): { x: number; y: number }[][] => {
+      const segs: { x: number; y: number }[][] = [];
+      let segPts: { x: number; y: number }[] = [];
+      for (let i = 0; i < pts_data.length; i++) {
+        if (pts_data[i].v > NIGHT_THRESHOLD) {
+          segPts.push(toPoint(pts_data[i]));
+        } else {
+          if (segPts.length >= 2) segs.push(segPts);
+          segPts = [];
+        }
+      }
+      if (segPts.length >= 2) segs.push(segPts);
+      return segs;
+    };
 
     // Split into contiguous "active" (daytime) segments so the zero-power
     // baseline during night is never drawn.
@@ -336,12 +452,36 @@ export class MpptSolarCard extends LitElement {
     }
     if (segPts.length >= 2) segments.push({ pts: segPts, startIdx: segStart });
 
-    const hoverIdx = this._hoverIdx;
-    const hoverData = hoverIdx != null ? data[hoverIdx] : null;
-    const hoverIsNight = hoverData != null && hoverData.v <= NIGHT_THRESHOLD;
-    const hoverPt = hoverData && !hoverIsNight ? toPoint(hoverData) : null;
+    // Build segments for the previous-day overlay.
+    const segmentsPrev = buildSegments(dataPrev);
+
+    // Binary-search helper: find the nearest point in `pts` to `tTarget`.
+    // Returns null if the nearest point is below the night threshold.
+    const nearestActive = (pts: HistoryPoint[], tTarget: number): HistoryPoint | null => {
+      if (pts.length === 0) return null;
+      let lo = 0;
+      let hi = pts.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (pts[mid].t < tTarget) lo = mid + 1;
+        else hi = mid;
+      }
+      if (lo > 0 && Math.abs(pts[lo - 1].t - tTarget) < Math.abs(pts[lo].t - tTarget)) lo--;
+      return pts[lo].v > NIGHT_THRESHOLD ? pts[lo] : null;
+    };
+
+    // Resolve hover data independently for today and yesterday so the tooltip
+    // and dots work even when only one of the two series has data.
+    const hoverT = this._hoverT;
+    const hoverData = hoverT !== null ? nearestActive(data, hoverT) : null;
+    const hoverPt = hoverData ? toPoint(hoverData) : null;
+    const hoverDataPrev = hoverT !== null ? nearestActive(dataPrev, hoverT) : null;
+    const hoverPtPrev = hoverDataPrev ? toPoint(hoverDataPrev) : null;
 
     const unit = this._unit(this.config.entity_power) || 'W';
+
+    // Tooltip X position: prefer today's cursor; fall back to prev-day dot.
+    const tooltipPt = hoverPt ?? hoverPtPrev;
 
     return html`
       <div
@@ -353,6 +493,16 @@ export class MpptSolarCard extends LitElement {
         aria-label=${localize('chart.title')}
       >
         <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" class="chart-svg">
+          ${segmentsPrev.map((pts) => {
+            const linePath = this._smoothPath(pts);
+            const first = pts[0];
+            const last = pts[pts.length - 1];
+            const areaPath = `${linePath} L ${last.x.toFixed(2)},${height} L ${first.x.toFixed(2)},${height} Z`;
+            return svg`
+              <path class="chart-area-prev" d=${areaPath}></path>
+              <path class="chart-line-prev" d=${linePath}></path>
+            `;
+          })}
           ${segments.map(({ pts }) => {
             const linePath = this._smoothPath(pts);
             const first = pts[0];
@@ -364,11 +514,17 @@ export class MpptSolarCard extends LitElement {
             `;
           })}
           ${hoverPt ? this._renderCursor(hoverPt, height) : ''}
+          ${hoverPtPrev ? svg`<circle class="chart-dot-prev" cx=${hoverPtPrev.x} cy=${hoverPtPrev.y} r="3"></circle>` : ''}
         </svg>
-        ${hoverData && hoverPt
-          ? html`<div class="chart-tooltip" style="left:${(hoverPt.x / width) * 100}%">
-              <div class="chart-tooltip-value">${Math.round(hoverData.v)} ${unit}</div>
-              <div class="chart-tooltip-time">${this._fmtTime(hoverData.t)}</div>
+        ${tooltipPt
+          ? html`<div class="chart-tooltip" style="left:${(tooltipPt.x / width) * 100}%">
+              ${hoverData && hoverPt
+                ? html`<div class="chart-tooltip-value">${Math.round(hoverData.v)} ${unit}</div>`
+                : ''}
+              ${hoverDataPrev
+                ? html`<div class="chart-tooltip-value-prev">${Math.round(hoverDataPrev.v)} ${unit}</div>`
+                : ''}
+              <div class="chart-tooltip-time">${this._fmtTime((hoverData ?? hoverDataPrev!).t)}</div>
             </div>`
           : ''}
       </div>
@@ -404,26 +560,17 @@ export class MpptSolarCard extends LitElement {
   private _onChartMove = (ev: PointerEvent): void => {
     const target = ev.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
-    const data = this._chartData;
-    if (rect.width <= 0 || !data.length) return;
+    if (rect.width <= 0 || (this._chartTMax === this._chartTMin)) return;
     const fx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
-    const tTarget = data[0].t + fx * (data[data.length - 1].t - data[0].t);
-    let lo = 0;
-    let hi = data.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (data[mid].t < tTarget) lo = mid + 1;
-      else hi = mid;
-    }
-    let nearest = lo;
-    if (lo > 0 && Math.abs(data[lo - 1].t - tTarget) < Math.abs(data[lo].t - tTarget)) {
-      nearest = lo - 1;
-    }
-    if (this._hoverIdx !== nearest) this._hoverIdx = nearest;
+    // Map the cursor's screen X to the chart's visible time range and store
+    // the timestamp directly. The render method resolves the nearest point in
+    // each series independently, so hover works even when today is empty.
+    const tTarget = this._chartTMin + fx * (this._chartTMax - this._chartTMin);
+    if (this._hoverT !== tTarget) this._hoverT = tTarget;
   };
 
   private _onChartLeave = (): void => {
-    if (this._hoverIdx !== null) this._hoverIdx = null;
+    if (this._hoverT !== null) this._hoverT = null;
   };
 
   private _unit(entityId?: string): string | undefined {
@@ -608,6 +755,20 @@ export class MpptSolarCard extends LitElement {
         height: 100%;
         overflow: visible;
       }
+      .chart-area-prev {
+        fill: rgba(128, 128, 128, 0.08);
+        stroke: none;
+      }
+      .chart-line-prev {
+        fill: none;
+        stroke: var(--secondary-text-color, #9e9e9e);
+        stroke-width: 1.5;
+        stroke-linejoin: round;
+        stroke-linecap: round;
+        stroke-dasharray: 4 3;
+        opacity: 0.5;
+        vector-effect: non-scaling-stroke;
+      }
       .chart-area {
         fill: var(--solar-accent-dim);
         stroke: none;
@@ -633,6 +794,13 @@ export class MpptSolarCard extends LitElement {
         stroke-width: 2;
         vector-effect: non-scaling-stroke;
       }
+      .chart-dot-prev {
+        fill: var(--secondary-text-color);
+        stroke: var(--card-background-color, var(--ha-card-background, #1c1c1e));
+        stroke-width: 2;
+        opacity: 0.7;
+        vector-effect: non-scaling-stroke;
+      }
       .chart-tooltip {
         position: absolute;
         top: 0;
@@ -651,6 +819,11 @@ export class MpptSolarCard extends LitElement {
       .chart-tooltip-value {
         font-weight: 600;
         color: var(--solar-accent);
+      }
+      .chart-tooltip-value-prev {
+        font-weight: 600;
+        color: var(--secondary-text-color);
+        opacity: 0.8;
       }
       .chart-tooltip-time {
         color: var(--secondary-text-color);

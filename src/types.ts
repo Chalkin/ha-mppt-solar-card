@@ -20,6 +20,7 @@ export interface MpptSolarCardConfig extends LovelaceCardConfig {
   entity_energy_yesterday?: string;
   // Chart
   show_chart?: boolean;
+  chart_mode?: 'auto' | 'rolling';
   chart_hours?: number;
   chart_height?: number;
 }
