@@ -645,7 +645,7 @@ export class MpptSolarCard extends LitElement {
 
       /* ── Card wrapper ──────────────────────────────────── */
       .solar-card {
-        padding: 16px 20px 20px;
+        padding: 12px 20px 15px;
         display: flex;
         flex-direction: column;
         gap: 0;
@@ -656,7 +656,7 @@ export class MpptSolarCard extends LitElement {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        margin-bottom: 16px;
+        margin-bottom: 10px;
       }
       .header-left {
         display: flex;
@@ -685,7 +685,7 @@ export class MpptSolarCard extends LitElement {
 
       /* ── Hero power block ──────────────────────────────── */
       .hero {
-        margin-bottom: 16px;
+        margin-bottom: 10px;
       }
       .hero-power {
         display: flex;
@@ -707,7 +707,7 @@ export class MpptSolarCard extends LitElement {
         margin-bottom: 4px;
       }
       .hero-peak {
-        margin-top: 6px;
+        margin-top: 4px;
         font-size: 16px;
         color: var(--secondary-text-color);
         font-weight: 400;
@@ -717,14 +717,14 @@ export class MpptSolarCard extends LitElement {
       .divider {
         height: 1px;
         background: var(--divider-color);
-        margin: 14px 0;
+        margin: 10px 0;
       }
 
       /* ── Chart / sparkline ─────────────────────────────── */
       .chart {
         position: relative;
         width: 100%;
-        margin-top: 4px;
+        margin-top: 2px;
         touch-action: none;
       }
       .chart--empty {
@@ -852,7 +852,7 @@ export class MpptSolarCard extends LitElement {
       .energy-grid {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 4px;
       }
       .energy-row {
         display: flex;
