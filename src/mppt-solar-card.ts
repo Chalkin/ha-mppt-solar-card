@@ -7,7 +7,6 @@ interface HistoryPoint {
   v: number;
 }
 
-// TODO: Replace this import with your own config type once you've defined your fields in types.ts.
 import type { MpptSolarCardConfig } from './types';
 
 import { CARD_VERSION } from './const';
@@ -31,23 +30,16 @@ interface WindowWithCustomCards extends Window {
 (window as unknown as WindowWithCustomCards).customCards =
   (window as unknown as WindowWithCustomCards).customCards || [];
 (window as unknown as WindowWithCustomCards).customCards.push({
-  // TODO: Change 'mppt-solar-card' to match your @customElement decorator name.
   type: 'mppt-solar-card',
-  // TODO: Give your card a user-facing name and description.
   name: 'MPPT Solar Card',
-  description: 'A template custom card for you to create something awesome',
+  description: 'Visualizes the live state of an MPPT solar charge controller.',
 });
 
-// TODO: Rename 'mppt-solar-card' to your card's unique tag name.
-// Convention: all lowercase, hyphen-separated, and prefixed to avoid clashes
-// e.g. 'my-weather-card'. Must match the `type:` in your YAML config and the
-// window.customCards entry above.
 @customElement('mppt-solar-card')
 export class MpptSolarCard extends LitElement {
   // getConfigElement is called by HA when the user opens the visual editor.
   // The dynamic import keeps the editor code out of the main bundle — it is only
   // loaded when actually needed, improving initial load time.
-  // TODO: If you rename your editor element in editor.ts, update the tag name below.
   public static async getConfigElement(): Promise<LovelaceCardEditor> {
     try {
       await import('./editor');
@@ -59,13 +51,11 @@ export class MpptSolarCard extends LitElement {
     }
   }
 
-  // getStubConfig returns a minimal valid config used when the user adds your
-  // card from the picker without going through the editor first.
-  // TODO: Add your required fields here so the card doesn't throw on first render.
-  // Example: return { entity: 'light.living_room' };
+  // getStubConfig returns a minimal valid config used when the user adds the
+  // card from the picker without going through the visual editor first.
   public static getStubConfig(): Record<string, unknown> {
     return {
-      name: 'Solar',
+      name: 'MPPT Solar',
       entity_power: '',
       entity_peak_power_today: '',
       entity_voltage: '',
@@ -644,15 +634,6 @@ export class MpptSolarCard extends LitElement {
     `;
   }
 
-  private _showWarning(warning: string): TemplateResult {
-    return html` <hui-warning>${warning}</hui-warning> `;
-  }
-
-  private _showError(error: string): TemplateResult {
-    const errorCard = document.createElement('hui-error-card');
-    errorCard.setConfig({ type: 'error', error, origConfig: this.config });
-    return html` ${errorCard} `;
-  }
 
   static get styles(): CSSResultGroup {
     return css`

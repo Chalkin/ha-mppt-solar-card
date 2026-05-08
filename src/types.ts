@@ -1,9 +1,8 @@
-import { LovelaceCard, LovelaceCardConfig, LovelaceCardEditor } from 'custom-card-helpers';
+import { LovelaceCardConfig, LovelaceCardEditor } from 'custom-card-helpers';
 
 declare global {
   interface HTMLElementTagNameMap {
     'mppt-solar-card-editor': LovelaceCardEditor;
-    'hui-error-card': LovelaceCard;
   }
 }
 
