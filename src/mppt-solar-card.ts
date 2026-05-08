@@ -1,4 +1,4 @@
-import { LitElement, html, svg, SVGTemplateResult, TemplateResult, css, PropertyValues, CSSResultGroup } from 'lit';
+import { LitElement, html, svg, TemplateResult, css, PropertyValues, CSSResultGroup } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { HomeAssistant, LovelaceCardEditor } from 'custom-card-helpers';
 
@@ -456,9 +456,16 @@ export class MpptSolarCard extends LitElement {
     const segmentsPrev = buildSegments(dataPrev);
 
     // Binary-search helper: find the nearest point in `pts` to `tTarget`.
-    // Returns null if the nearest point is below the night threshold.
+    // Returns null if `tTarget` is outside the series' time range (so we never
+    // snap to an end-of-series sample when hovering well past it) or if the
+    // nearest point is below the night threshold.
     const nearestActive = (pts: HistoryPoint[], tTarget: number): HistoryPoint | null => {
       if (pts.length === 0) return null;
+      const tFirst = pts[0].t;
+      const tLast = pts[pts.length - 1].t;
+      // Small tolerance so the very edges still register a hover.
+      const tol = Math.max((tLast - tFirst) / Math.max(pts.length - 1, 1), 1);
+      if (tTarget < tFirst - tol || tTarget > tLast + tol) return null;
       let lo = 0;
       let hi = pts.length - 1;
       while (lo < hi) {
@@ -480,8 +487,11 @@ export class MpptSolarCard extends LitElement {
 
     const unit = this._unit(this.config.entity_power) || 'W';
 
-    // Tooltip X position: prefer today's cursor; fall back to prev-day dot.
-    const tooltipPt = hoverPt ?? hoverPtPrev;
+    // Cursor line and tooltip follow the actual pointer position, not the
+    // snapped data point — otherwise they jump to the end of today's line
+    // when the pointer is past today's last sample.
+    const hoverX = hoverT !== null ? ((hoverT - tMin) / tRange) * width : null;
+    const hasHover = hoverX !== null && (hoverData !== null || hoverDataPrev !== null);
 
     return html`
       <div
@@ -513,14 +523,15 @@ export class MpptSolarCard extends LitElement {
               <path class="chart-line" d=${linePath}></path>
             `;
           })}
-          ${hoverPt ? this._renderCursor(hoverPt, height) : ''}
-          ${hoverPtPrev ? svg`<circle class="chart-dot-prev" cx=${hoverPtPrev.x} cy=${hoverPtPrev.y} r="3"></circle>` : ''}
+          ${hasHover ? svg`<line class="chart-cursor" x1=${hoverX} x2=${hoverX} y1="0" y2=${height}></line>` : ''}
+          ${hoverPt ? svg`<circle class="chart-dot" cx=${hoverPt.x} cy=${hoverPt.y} r="3.5"></circle>` : ''}
+          ${hoverPtPrev
+            ? svg`<circle class="chart-dot-prev" cx=${hoverPtPrev.x} cy=${hoverPtPrev.y} r="3"></circle>`
+            : ''}
         </svg>
-        ${tooltipPt
-          ? html`<div class="chart-tooltip" style="left:${(tooltipPt.x / width) * 100}%">
-              ${hoverData && hoverPt
-                ? html`<div class="chart-tooltip-value">${Math.round(hoverData.v)} ${unit}</div>`
-                : ''}
+        ${hasHover
+          ? html`<div class="chart-tooltip" style="left:${(hoverX! / width) * 100}%">
+              ${hoverData ? html`<div class="chart-tooltip-value">${Math.round(hoverData.v)} ${unit}</div>` : ''}
               ${hoverDataPrev
                 ? html`<div class="chart-tooltip-value-prev">${Math.round(hoverDataPrev.v)} ${unit}</div>`
                 : ''}
@@ -528,13 +539,6 @@ export class MpptSolarCard extends LitElement {
             </div>`
           : ''}
       </div>
-    `;
-  }
-
-  private _renderCursor(pt: { x: number; y: number }, height: number): SVGTemplateResult {
-    return svg`
-      <line class="chart-cursor" x1=${pt.x} x2=${pt.x} y1="0" y2=${height}></line>
-      <circle class="chart-dot" cx=${pt.x} cy=${pt.y} r="3.5"></circle>
     `;
   }
 
@@ -560,7 +564,7 @@ export class MpptSolarCard extends LitElement {
   private _onChartMove = (ev: PointerEvent): void => {
     const target = ev.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
-    if (rect.width <= 0 || (this._chartTMax === this._chartTMin)) return;
+    if (rect.width <= 0 || this._chartTMax === this._chartTMin) return;
     const fx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
     // Map the cursor's screen X to the chart's visible time range and store
     // the timestamp directly. The render method resolves the nearest point in
@@ -709,14 +713,14 @@ export class MpptSolarCard extends LitElement {
         line-height: 1;
       }
       .hero-value {
-        font-size: 64px;
+        font-size: 54px;
         font-weight: 700;
         color: var(--solar-accent);
         letter-spacing: -2px;
         line-height: 1;
       }
       .hero-unit {
-        font-size: 24px;
+        font-size: 20px;
         font-weight: 500;
         color: var(--solar-accent);
         margin-bottom: 4px;
