@@ -22,4 +22,6 @@ export interface MpptSolarCardConfig extends LovelaceCardConfig {
   chart_mode?: 'auto' | 'rolling';
   chart_hours?: number;
   chart_height?: number;
+  // Sun / night mode
+  entity_sun?: string;
 }

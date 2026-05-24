@@ -122,6 +122,7 @@ export class MpptSolarCard extends LitElement {
     if (!changedProps.has('hass')) return false;
     const oldHass = changedProps.get('hass') as HomeAssistant | undefined;
     if (!oldHass) return true;
+    const sunEntity = this.config.entity_sun ?? 'sun.sun';
     const ids = [
       this.config.entity_power,
       this.config.entity_peak_power_today,
@@ -129,8 +130,17 @@ export class MpptSolarCard extends LitElement {
       this.config.entity_current,
       this.config.entity_energy_today,
       this.config.entity_energy_yesterday,
+      sunEntity,
     ].filter(Boolean) as string[];
     return ids.some((id) => oldHass.states[id] !== this.hass.states[id]);
+  }
+
+  /** Returns true when the sun is below the horizon (night mode). */
+  private get _isNight(): boolean {
+    if (!this.hass) return false;
+    const sunEntity = this.config?.entity_sun ?? 'sun.sun';
+    const sunState = this.hass.states[sunEntity];
+    return sunState?.state === 'below_horizon';
   }
 
   protected updated(changedProps: PropertyValues): void {
@@ -270,7 +280,7 @@ export class MpptSolarCard extends LitElement {
 
     return html`
       <ha-card tabindex="0">
-        <div class="solar-card">
+        <div class="solar-card ${this._isNight ? 'night' : ''}">
           ${this._renderHeader()} ${this._renderHero()} ${this._renderChart()}
           <div class="divider"></div>
           ${this._renderStats()}
@@ -299,13 +309,14 @@ export class MpptSolarCard extends LitElement {
 
   private _renderHeader(): TemplateResult {
     const name = this.config.name ?? 'MPPT Solar';
+    const icon = this._isNight ? 'mdi:weather-night' : 'mdi:weather-sunny';
     return html`
       <div class="header">
         <div class="header-left">
           <span class="header-dot"></span>
           <span class="header-title">${name}</span>
         </div>
-        <ha-icon class="header-icon" icon="mdi:weather-sunny"></ha-icon>
+        <ha-icon class="header-icon" icon=${icon}></ha-icon>
       </div>
     `;
   }
@@ -313,13 +324,16 @@ export class MpptSolarCard extends LitElement {
   private _renderHero(): TemplateResult {
     const power = this._fmt(this.config.entity_power, 0);
     const peak = this._fmt(this.config.entity_peak_power_today, 0);
+    const subLine = this._isNight
+      ? html`<div class="hero-peak">idle</div>`
+      : html`<div class="hero-peak">peak ${peak} W today</div>`;
     return html`
       <div class="hero">
         <div class="hero-power">
           <span class="hero-value">${power}</span>
           <span class="hero-unit">W</span>
         </div>
-        <div class="hero-peak">peak ${peak} W today</div>
+        ${subLine}
       </div>
     `;
   }
@@ -603,11 +617,12 @@ export class MpptSolarCard extends LitElement {
   private _renderEnergy(): TemplateResult {
     const today = this._fmt(this.config.entity_energy_today, 2);
     const yesterday = this._fmt(this.config.entity_energy_yesterday, 2);
+    const todayClass = this._isNight ? 'energy-value secondary' : 'energy-value accent';
     return html`
       <div class="energy-grid">
         <div class="energy-row">
           <span class="energy-label">Today</span>
-          <span class="energy-value accent">${today} kWh</span>
+          <span class=${todayClass}>${today} kWh</span>
         </div>
         <div class="energy-row">
           <span class="energy-label secondary">Yesterday</span>
@@ -670,6 +685,7 @@ export class MpptSolarCard extends LitElement {
         border-radius: 50%;
         background: var(--solar-accent);
         flex-shrink: 0;
+        box-shadow: 0 0 6px 2px rgba(240, 180, 41, 0.55);
       }
       .header-title {
         font-size: 16px;
@@ -878,6 +894,20 @@ export class MpptSolarCard extends LitElement {
       .energy-value.secondary {
         color: var(--secondary-text-color);
         font-weight: 400;
+      }
+
+      /* ── Night mode ────────────────────────────────────── */
+      .night .header-dot {
+        background: var(--secondary-text-color);
+        box-shadow: none;
+      }
+      .night .header-icon {
+        color: var(--secondary-text-color);
+        opacity: 0.7;
+      }
+      .night .hero-value,
+      .night .hero-unit {
+        color: var(--secondary-text-color);
       }
 
       /* ── Skeleton / loading UI ───────────────────────── */
