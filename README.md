@@ -6,6 +6,13 @@ A Home Assistant Lovelace custom card for visualising the live state of an MPPT 
 [![License][license-shield]](LICENSE.md)
 [![hacs_badge](https://img.shields.io/badge/HACS-Default-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
 
+## Preview
+
+![Light mode with popup](https://github.com/user-attachments/assets/f8b874f4-71f5-455a-a7c4-1abfe004fbf2)
+![Light mode](https://github.com/user-attachments/assets/dbe99b88-88bb-44b5-a962-d553932dd61c)
+![Dark mode with popup](https://github.com/user-attachments/assets/209d7c33-d159-4c28-ad83-88f50c195fc3)
+![Dark mode](https://github.com/user-attachments/assets/52a22adc-383b-405f-8539-7f939f92e77d)
+
 ---
 
 ## Overview
