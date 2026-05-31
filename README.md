@@ -8,8 +8,8 @@ A Home Assistant Lovelace custom card for visualising the live state of an MPPT 
 
 ## Preview
 
-<img width="1688" height="774" alt="solar-mppt-dark-mode" src="https://github.com/user-attachments/assets/11d9f337-4115-4046-9766-513e3b231b10" />
-<img width="1690" height="774" alt="solar-mppt-light-mode" src="https://github.com/user-attachments/assets/8a57e6d3-a329-4a35-a9c0-78cb9636b123" />
+<img width="1673" height="767" alt="solar-mppt-dark-mode" src="https://github.com/user-attachments/assets/1a087dcc-bacb-47d2-943e-30ad80e5dbe3" />
+<img width="1675" height="766" alt="solar-mppt-light-mode" src="https://github.com/user-attachments/assets/7d3cd62b-3d23-4e72-b27e-2f3a659d8397" />
 
 ---
 
