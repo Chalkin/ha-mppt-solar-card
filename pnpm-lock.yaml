@@ -30,6 +30,9 @@ importers:
         specifier: ^3.3.2
         version: 3.3.2
     devDependencies:
+      '@eslint/js':
+        specifier: ^9.39.4
+        version: 9.39.4
       '@rollup/plugin-commonjs':
         specifier: ^26.0.0
         version: 26.0.3(rollup@4.60.3)
