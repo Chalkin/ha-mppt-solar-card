@@ -73,7 +73,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: dist/mppt-solar-card.js
-          asset_name: mppt-solar-card.js
+          file: dist/ha-mppt-solar-card.js
+          asset_name: ha-mppt-solar-card.js
           tag: ${{ github.ref }}
           overwrite: true

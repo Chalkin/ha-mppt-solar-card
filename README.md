@@ -1,9 +1,11 @@
 # MPPT Solar Card
+The MPPT Solar Card gives you a clean, at-a-glance view of your solar charge controller's data.
 
-A Home Assistant Lovelace custom card for visualising the live state of an MPPT solar charge controller.
+This card is for [Lovelace](https://www.home-assistant.io/lovelace) on [Home Assistant](https://www.home-assistant.io/).
 
 [![GitHub Release][releases-shield]][releases]
-[![License][license-shield]](LICENSE.md)
+
+[![License][license-shield]](LICENSE)
 [![hacs_badge](https://img.shields.io/badge/HACS-Default-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
 
 ## Preview
@@ -11,7 +13,9 @@ A Home Assistant Lovelace custom card for visualising the live state of an MPPT 
 <img width="1673" height="767" alt="solar-mppt-dark-mode" src="https://github.com/user-attachments/assets/1a087dcc-bacb-47d2-943e-30ad80e5dbe3" />
 <img width="1675" height="766" alt="solar-mppt-light-mode" src="https://github.com/user-attachments/assets/7d3cd62b-3d23-4e72-b27e-2f3a659d8397" />
 
----
+
+## Requirements
+- This card uses [Sun integration](https://www.home-assistant.io/integrations/sun/) so it needs to be enabled
 
 ## Overview
 
@@ -40,13 +44,13 @@ The MPPT Solar Card gives you a clean, at-a-glance view of your solar charge con
 
 ### Manual
 
-1. Download `mppt-solar-card.js` from the [latest release][releases].
-2. Copy it to `<config>/www/mppt-solar-card.js`.
+1. Download `ha-mppt-solar-card.js` from the [latest release][releases].
+2. Copy it to `<config>/www/ha-mppt-solar-card.js`.
 3. Add a resource entry in your dashboard settings:
 
 ```yaml
 resources:
-  - url: /local/mppt-solar-card.js
+  - url: /local/ha-mppt-solar-card.js
     type: module
 ```
 
@@ -142,7 +146,7 @@ Clear your browser cache or do a hard reload (`Ctrl+Shift+R` / `Cmd+Shift+R`).
 Check that the entity ID in your YAML exactly matches the entity ID in Home Assistant (Settings → Devices & Services → Entities). Entity IDs are case-sensitive.
 
 **Visual editor not opening**
-Open your browser's developer console (`F12`) and look for JavaScript errors. Make sure the `mppt-solar-card.js` resource is registered and the browser cache has been cleared after installation.
+Open your browser's developer console (`F12`) and look for JavaScript errors. Make sure the `ha-mppt-solar-card.js` resource is registered and the browser cache has been cleared after installation.
 
 **Card not updating when sensor values change**
 Confirm the sensor entities are updating in Home Assistant (check their state in Developer Tools → States). If states update but the card does not, try removing and re-adding the card.
@@ -152,5 +156,7 @@ See the [thomasloven wiki][troubleshooting].
 
 ---
 
+[releases-shield]: https://img.shields.io/github/v/release/Chalkin/ha-mppt-solar-card?style=for-the-badge
 [releases]: https://github.com/Chalkin/ha-mppt-solar-card/releases
+[license-shield]: https://img.shields.io/github/license/Chalkin/ha-mppt-solar-card?style=for-the-badge
 [troubleshooting]: https://github.com/thomasloven/hass-config/wiki/Lovelace-Plugins

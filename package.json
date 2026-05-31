@@ -1,7 +1,7 @@
 {
   "name": "mppt-solar-card",
   "type": "module",
-  "version": "2.0.0",
+  "version": "0.1.0",
   "packageManager": "pnpm@10.33.3",
   "description": "Lovelace MPPT Solar Controller Card",
   "keywords": [
@@ -12,7 +12,7 @@
     "lovelace",
     "custom-cards"
   ],
-  "module": "mppt-solar-card.js",
+  "module": "ha-mppt-solar-card.js",
   "repository": "git@github.com:Chalkin/ha-mppt-solar-card.git",
   "author": "Patrick Klostermeier <kontakt@patrick-klostermeier.de>",
   "license": "MIT",

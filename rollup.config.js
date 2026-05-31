@@ -31,7 +31,7 @@ export default [
   {
     input: 'src/mppt-solar-card.ts',
     output: {
-      file: 'dist/mppt-solar-card.js',
+      file: 'dist/ha-mppt-solar-card.js',
       format: 'es',
       inlineDynamicImports: true,
     },
