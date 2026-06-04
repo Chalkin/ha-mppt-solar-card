@@ -10,8 +10,8 @@ export interface MpptSolarCardConfig extends LovelaceCardConfig {
   type: string;
   name?: string;
   icon?: string;
+  entity?: string;
   // Entity bindings
-  entity_power?: string;
   entity_peak_power_today?: string;
   entity_voltage?: string;
   entity_current?: string;
