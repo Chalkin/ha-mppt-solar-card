@@ -14,9 +14,9 @@ controller's telemetry. The intended layout (see design reference below):
 | Region          | Content                                            | Source entity (configurable)        |
 | --------------- | -------------------------------------------------- | ----------------------------------- |
 | Header          | Card title + sun status icon                       | `name` (config) / static icon       |
-| Hero value      | Current solar wattage in **W** (large, accented)   | `entity_power` (e.g. `sensor.solar_power`) |
+| Hero value      | Current solar wattage in **W** (large, accented)   | `entity` (e.g. `sensor.solar_power`) |
 | Sub-hero        | "peak <value> W today"                             | `entity_peak_power_today`           |
-| Chart           | Sparkline / area chart of today's power curve      | `entity_power` history              |
+| Chart           | Sparkline / area chart of today's power curve      | `entity` history                    |
 | Stats row 1     | **Voltage** (V) · **Current** (A)                  | `entity_voltage`, `entity_current`  |
 | Stats row 2     | **Today** kWh (accented) · **Yesterday** kWh       | `entity_energy_today`, `entity_energy_yesterday` |
 
@@ -41,7 +41,7 @@ binding with `entity_` so YAML stays self-documenting:
 ```yaml
 type: custom:mppt-solar-card
 name: Solar Dach
-entity_power: sensor.solar_power
+entity: sensor.solar_power
 entity_peak_power_today: sensor.solar_peak_power_today
 entity_voltage: sensor.solar_voltage
 entity_current: sensor.solar_current

@@ -65,7 +65,7 @@ Point the card at your sensor entities and you are done. All entity bindings are
 ```yaml
 type: custom:mppt-solar-card
 name: Solar Roof
-entity_power: sensor.solar_power
+entity: sensor.solar_power
 entity_energy_today: sensor.solar_energy_today
 ```
 
@@ -74,7 +74,7 @@ entity_energy_today: sensor.solar_energy_today
 ```yaml
 type: custom:mppt-solar-card
 name: Solar Dach
-entity_power: sensor.solar_power
+entity: sensor.solar_power
 entity_peak_power_today: sensor.solar_peak_power_today
 entity_voltage: sensor.solar_voltage
 entity_current: sensor.solar_current
@@ -100,7 +100,7 @@ Each field accepts a Home Assistant entity ID string. All bindings are optional.
 
 | Name                      | Type   | Display region      | Unit | Description                                    |
 | ------------------------- | ------ | ------------------- | ---- | ---------------------------------------------- |
-| `entity_power`            | string | Hero (large value)  | W    | Current solar output power                     |
+| `entity`                  | string | Hero (large value)  | W    | Current solar output power                     |
 | `entity_peak_power_today` | string | Sub-hero            | W    | Peak power recorded today                      |
 | `entity_voltage`          | string | Stats row           | V    | Battery / panel voltage (shown to 1 decimal)   |
 | `entity_current`          | string | Stats row           | A    | Charge current (shown to 1 decimal)            |

@@ -56,7 +56,7 @@ export class MpptSolarCard extends LitElement {
   public static getStubConfig(): Record<string, unknown> {
     return {
       name: 'MPPT Solar',
-      entity_power: '',
+      entity: '',
       entity_peak_power_today: '',
       entity_voltage: '',
       entity_current: '',
@@ -124,7 +124,7 @@ export class MpptSolarCard extends LitElement {
     if (!oldHass) return true;
     const sunEntity = this.config.entity_sun ?? 'sun.sun';
     const ids = [
-      this.config.entity_power,
+      this.config.entity,
       this.config.entity_peak_power_today,
       this.config.entity_voltage,
       this.config.entity_current,
@@ -150,7 +150,7 @@ export class MpptSolarCard extends LitElement {
     const configChanged =
       changedProps.has('config') &&
       (!oldConfig ||
-        oldConfig.entity_power !== this.config.entity_power ||
+        oldConfig.entity !== this.config.entity ||
         (oldConfig.chart_hours ?? 24) !== (this.config.chart_hours ?? 24) ||
         (oldConfig.chart_mode ?? 'auto') !== (this.config.chart_mode ?? 'auto') ||
         (oldConfig.show_chart !== false) !== (this.config.show_chart !== false));
@@ -162,8 +162,8 @@ export class MpptSolarCard extends LitElement {
       this._fetchHistory();
     }
 
-    if (changedProps.has('hass') && oldHass && this.config.entity_power) {
-      const id = this.config.entity_power;
+    if (changedProps.has('hass') && oldHass && this.config.entity) {
+      const id = this.config.entity;
       const newSt = this.hass.states[id];
       const oldSt = oldHass.states[id];
       if (newSt && newSt !== oldSt) {
@@ -181,13 +181,13 @@ export class MpptSolarCard extends LitElement {
 
   private async _fetchHistory(): Promise<void> {
     if (this._historyLoading) return;
-    if (!this.hass || !this.config.entity_power) {
+    if (!this.hass || !this.config.entity) {
       this._history = [];
       this._historyPrev = [];
       return;
     }
     this._historyLoading = true;
-    const entityId = this.config.entity_power;
+    const entityId = this.config.entity;
     const mode = this.config.chart_mode ?? 'auto';
     try {
       if (mode === 'auto') {
@@ -322,7 +322,7 @@ export class MpptSolarCard extends LitElement {
   }
 
   private _renderHero(): TemplateResult {
-    const power = this._fmt(this.config.entity_power, 0);
+    const power = this._fmt(this.config.entity, 0);
     const peak = this._fmt(this.config.entity_peak_power_today, 0);
     const subLine = this._isNight
       ? html`<div class="hero-peak">idle</div>`
@@ -489,7 +489,7 @@ export class MpptSolarCard extends LitElement {
     const hoverDataPrev = hoverT !== null ? nearestActive(dataPrev, hoverT) : null;
     const hoverPtPrev = hoverDataPrev ? toPoint(hoverDataPrev) : null;
 
-    const unit = this._unit(this.config.entity_power) || 'W';
+    const unit = this._unit(this.config.entity) || 'W';
 
     // Cursor line and tooltip follow the actual pointer position, not the
     // snapped data point — otherwise they jump to the end of today's line
