@@ -2,8 +2,8 @@ name: HACS Validation
 
 on:
   # Disabled until the first GitHub Release is published.
-  # push
-  # pull_request
+  push:
+  pull_request:
   workflow_dispatch:
 
 jobs:
